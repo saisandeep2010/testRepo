@@ -1,1 +1,40 @@
 hi
+import org.apache.spark.sql.{DataFrame, SparkSession}
+import com.amazonaws.encryptionsdk.kms.KmsMasterKey
+import com.amazonaws.encryptionsdk.{CiphertextHeaders, CommitmentPolicy}
+import com.amazonaws.services.kms.AWSKMSClientBuilder
+import com.amazonaws.encryptionsdk.jce.JceMasterKey
+
+import org.apache.spark.sql.functions._
+
+def encryptDataFrameWithKMS(dataFrame: DataFrame, kmsKeyId: String): DataFrame = {
+  // Create a SparkSession
+  val spark = SparkSession.builder.getOrCreate()
+
+  // Configure the KMS master key provider
+  val kmsMasterKey = new KmsMasterKey(AWSKMSClientBuilder.defaultClient(), kmsKeyId)
+
+  // Encrypt the DataFrame
+  val encryptedDF = spark.read.format("parquet").load() // Replace with your source DataFrame
+    .select(
+      lit(kmsKeyId).alias("_ek"), // Add the encryption context
+      col("*")
+    )
+    .withColumn("_ciphertext", lit(null).cast("binary"))
+    .selectExpr(
+      "STRUCT(*, _ciphertext AS _ciphertext)")
+    .write
+    .format("parquet") // Use the desired output format
+    .option("metadata", "true")
+    .option("encryptionType", "client-side")
+    .option("keyId", kmsMasterKey.getKeyArn)
+    .option("commitmentPolicy", CommitmentPolicy.RequireEncryptRequireDecrypt.name)
+    .save() // Replace with your target S3 path
+
+  encryptedDF // Return the encrypted DataFrame
+}
+
+val df: DataFrame = ... // Replace with your DataFrame
+val kmsKeyId = "your-kms-key-id"
+
+val encryptedDF = encryptDataFrameWithKMS(df, kmsKeyId)
